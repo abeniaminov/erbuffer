@@ -14,9 +14,9 @@
 
 -callback write_buffer_to(Ets, Params)
         -> ok
-    when Ets::tid(), Params::#{}.
+    when Ets::ets:tid(), Params::#{}.
 
 -callback send_to_buffer(Ets, Params)
         -> ok
-    when Ets::tid(), Params::#{}.
+    when Ets::ets:tid(), Params::#{}.
 
