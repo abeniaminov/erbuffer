@@ -59,7 +59,7 @@ lookup(Key, List) ->
 
 add_buffer(Name, Options) ->
     Args = #{
-        buff_time_inteval =>  lookup(time_inteval,  Options, 10000),
+        buff_time_interval =>  lookup(time_interval,  Options, 10000),
         buff_max_count_msg => lookup(max_count_msg,  Options, 1000),
         buff_handler => lookup(handler,  Options)
     },

@@ -38,7 +38,7 @@ write_to_buffer(Name, Params) ->
 
 
 
-init(#{buff_time_inteval := BuffTime} = BuffArgs) ->
+init(#{buff_time_interval := BuffTime} = BuffArgs) ->
     CurEts = ets:new(buffer, [ordered_set, public,  {read_concurrency, true}]),
     {ok,
         BuffArgs#{
@@ -58,7 +58,7 @@ handle_cast(
         buff_count := CurrBuffCount,
         buff_handler := BuffHandler,
         curr_timer := CurrTimer,
-        buff_time_inteval := BuffTime
+        buff_time_interval := BuffTime
     } = State) ->
     NewState =
         case  CurrBuffCount < BuffMaxCount of
@@ -85,7 +85,7 @@ handle_info(
     #{
         curr_ets := CurrEts,
         buff_handler := BuffHandler,
-        buff_time_inteval := BuffTime
+        buff_time_interval := BuffTime
     } = State) ->
     ok = BuffHandler:write_buffer_to(CurrEts, #{}),
     NewEts = ets:new(buffer, [ordered_set, public,  {read_concurrency, true}]),
