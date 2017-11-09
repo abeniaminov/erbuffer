@@ -63,11 +63,13 @@ handle_cast(
     NewState =
         case  CurrBuffCount < BuffMaxCount of
             true ->
-                ok = BuffHandler:send_to_buffer(CurrEts, Params),
+                spawn(
+                    fun() -> BuffHandler:send_to_buffer(CurrEts, Params) end),
                 State#{curr_buff_count => CurrBuffCount + 1};
             false ->
                 erlang:cancel_timer(CurrTimer),
-                ok = BuffHandler:write_buffer_to(CurrEts, Params),
+                spawn(
+                    fun() -> BuffHandler:write_buffer_to(CurrEts, Params), ets:delete(CurrEts) end),
                 NewEts = ets:new(buffer, [ordered_set, public,  {read_concurrency, true}]),
                 State#{
                     curr_buff_count => 0,
@@ -87,7 +89,9 @@ handle_info(
         buff_handler := BuffHandler,
         buff_time_interval := BuffTime
     } = State) ->
-    ok = BuffHandler:write_buffer_to(CurrEts, #{}),
+    spawn(
+        fun() -> BuffHandler:write_buffer_to(CurrEts, #{}), ets:delete(CurrEts) end),
+
     NewEts = ets:new(buffer, [ordered_set, public,  {read_concurrency, true}]),
     {noreply, State#{
         curr_buff_count => 0,
