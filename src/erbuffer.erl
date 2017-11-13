@@ -58,7 +58,13 @@ init(#{buff_time_interval := BuffTime, active := Active } = BuffArgs) ->
 handle_call(get_active, _From, State) ->
     {reply, {active,  get(is_active_buffer)}, State};
 
-handle_call({set_active, Active}, _From, #{curr_timer := CurrTimer, buff_time_interval := BuffTime} = State) ->
+handle_call({set_active, Active}, _From,
+    #{
+        curr_timer := CurrTimer,
+        buff_time_interval := BuffTime,
+        buff_handler := BuffHandler,
+        curr_ets := CurrEts
+    } = State) ->
     OldActive = get(is_active_buffer),
     NewTimerRef =
         case OldActive of
@@ -67,7 +73,7 @@ handle_call({set_active, Active}, _From, #{curr_timer := CurrTimer, buff_time_in
                     false ->
                         CurrTimer;
                     true ->
-                        put(is_active_buffer, Active),
+                        put(is_active_buffer, true),
                         erlang:start_timer(BuffTime, self(), end_of_time)
 
                 end;
@@ -76,12 +82,14 @@ handle_call({set_active, Active}, _From, #{curr_timer := CurrTimer, buff_time_in
                     true ->
                         CurrTimer;
                     false ->
-                        put(is_active_buffer, Active),
+                        put(is_active_buffer, false),
                         erlang:cancel_timer(CurrTimer),
+                        BuffHandler:write_buffer_to(CurrEts, #{}),
+                        ets:delete_all_objects(CurrEts),
                         none
                 end
         end,
-    {reply, ok, State#{curr_timer => NewTimerRef}};
+    {reply, ok, State#{curr_timer => NewTimerRef, curr_buff_count => 0}};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
