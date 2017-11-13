@@ -19,7 +19,7 @@
 start(_StartType, _StartArgs) ->
     case erbuffer_sup:start_link() of
         {ok, Pid} ->
-            case env(buffer) of
+            case env(buffers) of
                 {ok, Buffers} ->
                     load_buffers(Buffers);
                 _ ->
