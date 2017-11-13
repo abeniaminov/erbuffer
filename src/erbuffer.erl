@@ -12,7 +12,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/2,  write_to_buffer/2]).
+-export([start_link/2, write_to_buffer/2, get_active/1, set_active/2]).
 
 %% gen_server callbacks
 -export([init/1,
@@ -32,17 +32,56 @@ start_link(Name, BuffArgs) ->
 write_to_buffer(Name, Params) ->
     gen_server:cast(Name, {write_to_buffer, Params}).
 
+get_active(Name) ->
+    gen_server:call(Name, get_active).
+
+set_active(Name, Active) ->
+    gen_server:call(Name, {set_active, Active}).
 
 
-init(#{buff_time_interval := BuffTime} = BuffArgs) ->
+init(#{buff_time_interval := BuffTime, active := Active } = BuffArgs) ->
     CurEts = ets:new(buffer, [ordered_set, public,  {write_concurrency, true}]),
+    put(is_active_buffer, Active),
     {ok,
         BuffArgs#{
             ets_pool => [],
             curr_ets => CurEts,
             curr_buff_count => 0,
-            curr_timer => erlang:start_timer(BuffTime, self(), end_of_time)}}.
+            curr_timer =>
+                case Active of
+                    true -> erlang:start_timer(BuffTime, self(), end_of_time);
+                    false -> none
+                end
+        }
+    }.
 
+handle_call(get_active, _From, State) ->
+    {reply, {active,  get(is_active_buffer)}, State};
+
+handle_call({set_active, Active}, _From, #{curr_timer := CurrTimer, buff_time_interval := BuffTime} = State) ->
+    OldActive = get(is_active_buffer),
+    NewTimerRef =
+        case OldActive of
+            false ->
+                case Active of
+                    false ->
+                        CurrTimer;
+                    true ->
+                        put(is_active_buffer, Active),
+                        erlang:start_timer(BuffTime, self(), end_of_time)
+
+                end;
+            true ->
+                case Active of
+                    true ->
+                        CurrTimer;
+                    false ->
+                        put(is_active_buffer, Active),
+                        erlang:cancel_timer(CurrTimer),
+                        none
+                end
+        end,
+    {reply, ok, State#{curr_timer => NewTimerRef}};
 
 handle_call(_Request, _From, State) ->
     {reply, ok, State}.
@@ -58,34 +97,38 @@ handle_cast(
         curr_timer := CurrTimer,
         buff_time_interval := BuffTime
     } = State) ->
-    NewState =
-        case  CurrBuffCount < BuffMaxCount of
-            true ->
-                spawn(
-                    fun() -> BuffHandler:send_to_buffer(CurrEts, Params) end),
-                State#{curr_buff_count => CurrBuffCount + 1};
-            false ->
-                erlang:cancel_timer(CurrTimer),
-                Self = self(),
-                spawn(
-                    fun() ->
-                        BuffHandler:write_buffer_to(CurrEts, Params),
-                        ets:delete_all_objects(CurrEts),
-                        Self ! {put_back, CurrEts }
-                    end
-                ),
-                {NewEts, Pool} =
-                case EtsPool of
-                    [] -> {ets:new(buffer, [ordered_set, public,  {write_concurrency, true}]), []};
-                    [E | Rest] ->  {E, Rest}
+    case get(is_active_buffer) of
+        true ->
+            NewState =
+                case  CurrBuffCount < BuffMaxCount of
+                    true ->
+                        spawn(
+                            fun() -> BuffHandler:send_to_buffer(CurrEts, Params) end),
+                        State#{curr_buff_count => CurrBuffCount + 1};
+                    false ->
+                        erlang:cancel_timer(CurrTimer),
+                        Self = self(),
+                        spawn(
+                            fun() ->
+                                BuffHandler:write_buffer_to(CurrEts, Params),
+                                ets:delete_all_objects(CurrEts),
+                                Self ! {put_back, CurrEts }
+                            end
+                        ),
+                        {NewEts, Pool} =
+                            case EtsPool of
+                                [] -> {ets:new(buffer, [ordered_set, public,  {write_concurrency, true}]), []};
+                                [E | Rest] ->  {E, Rest}
+                            end,
+                        State#{
+                            ets_pool => Pool,
+                            curr_buff_count => 0,
+                            curr_ets => NewEts,
+                            curr_timer => erlang:start_timer(BuffTime, self(), end_of_time)}
                 end,
-                State#{
-                    ets_pool => Pool,
-                    curr_buff_count => 0,
-                    curr_ets => NewEts,
-                    curr_timer => erlang:start_timer(BuffTime, self(), end_of_time)}
-        end,
-    {noreply, NewState};
+            {noreply, NewState};
+        false ->  {noreply, State}
+    end;
 
 handle_cast(_Request, State) ->
     {noreply, State}.
@@ -99,25 +142,31 @@ handle_info(
         buff_handler := BuffHandler,
         buff_time_interval := BuffTime } = State) ->
 
-    Self = self(),
-    spawn(
-        fun() ->
-            BuffHandler:write_buffer_to(CurrEts, #{}),
-            ets:delete_all_objects(CurrEts),
-            Self ! {put_back, CurrEts }
-        end
-    ),
+    case get(is_active_buffer) of
+        true ->
+            Self = self(),
+            spawn(
+                fun() ->
+                    BuffHandler:write_buffer_to(CurrEts, #{}),
+                    ets:delete_all_objects(CurrEts),
+                    Self ! {put_back, CurrEts }
+                end
+            ),
 
-    {NewEts, Pool} =
-        case EtsPool of
-            [] -> {ets:new(buffer, [ordered_set, public,  {write_concurrency, true}]), []};
-            [E | Rest] ->  {E, Rest}
-        end,
-    {noreply, State#{
-        ets_pool => Pool,
-        curr_buff_count => 0,
-        curr_ets => NewEts,
-        curr_timer => erlang:start_timer(BuffTime, self(), end_of_time)}};
+            {NewEts, Pool} =
+                case EtsPool of
+                    [] -> {ets:new(buffer, [ordered_set, public,  {write_concurrency, true}]), []};
+                    [E | Rest] ->  {E, Rest}
+                end,
+            {noreply, State#{
+                ets_pool => Pool,
+                curr_buff_count => 0,
+                curr_ets => NewEts,
+                curr_timer => erlang:start_timer(BuffTime, self(), end_of_time)}};
+        false ->
+            {noreply, State}
+    end;
+
 
 handle_info({put_back, UsedEts},  #{ets_pool := EtsPool} = State) ->
     {noreply, State#{ets_pool => [UsedEts | EtsPool]}};
@@ -133,8 +182,12 @@ terminate(_Reason,
         buff_handler := BuffHandler,
         curr_timer := CurrTimer
     } = _State) ->
-    erlang:cancel_timer(CurrTimer),
-    BuffHandler:write_buffer_to(CurrEts, #{}),
+    case get(is_active_buffer) of
+        true ->
+            erlang:cancel_timer(CurrTimer),
+            BuffHandler:write_buffer_to(CurrEts, #{});
+        false -> nothing
+    end,
     ok.
 
 
